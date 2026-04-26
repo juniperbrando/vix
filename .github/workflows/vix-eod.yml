@@ -1,0 +1,58 @@
+name: VIX EOD Slack alert
+
+on:
+  schedule:
+    # 21:30 UTC = 22:30 CET / 23:30 CEST — ~30 min after US close, every weekday
+    - cron: '30 21 * * 1-5'
+  workflow_dispatch:  # allow manual triggers from the GH UI / `gh workflow run`
+
+jobs:
+  vix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch VIX, classify, post to Slack
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          set -euo pipefail
+
+          # 1. Fetch VIX from CBOE
+          response=$(curl -sS 'https://cdn.cboe.com/api/global/delayed_quotes/quotes/_VIX.json')
+          price=$(jq -r '.data.current_price'        <<<"$response")
+          change=$(jq -r '.data.price_change'        <<<"$response")
+          pct=$(jq -r '.data.price_change_percent'   <<<"$response")
+
+          if [[ "$price" == "null" || -z "$price" ]]; then
+            echo "VIX data missing from CBOE — aborting silently"
+            exit 0
+          fi
+
+          # 2. Classify tier (the user's 3-number rule, mapped to 5 traffic-light tiers)
+          if   (( $(bc -l <<<"$price <= 14") )); then tier="Complacency"; emoji="🔴"; action="TRIM / sell";   ping=""
+          elif (( $(bc -l <<<"$price <  20") )); then tier="Calm";        emoji="🟢"; action="Hold";          ping=""
+          elif (( $(bc -l <<<"$price <  30") )); then tier="Elevated";    emoji="🟡"; action="Watch";         ping=""
+          elif (( $(bc -l <<<"$price <  45") )); then tier="Fear";        emoji="🟠"; action="*BUY* SPY/QQQ"; ping="<!channel> "
+          else                                        tier="Panic";       emoji="🚨"; action="*BUY MORE*";    ping="<!channel> "
+          fi
+
+          # 3. Arrow + signed change/pct
+          if   (( $(bc -l <<<"$change > 0") )); then arrow="▲"; signed_change=$(printf "+%.2f" "$change"); signed_pct=$(printf "+%.2f" "$pct")
+          elif (( $(bc -l <<<"$change < 0") )); then arrow="▼"; signed_change=$(printf  "%.2f" "$change"); signed_pct=$(printf  "%.2f" "$pct")
+          else                                       arrow="▬"; signed_change="0.00";                       signed_pct="0.00"
+          fi
+
+          formatted_price=$(printf "%.2f" "$price")
+
+          # 4. Build message (\n-separated; mrkdwn-formatted)
+          nl=$'\n'
+          message="${ping}📊 *VIX EOD:* \`${formatted_price}\`  (${arrow} ${signed_change}  ${signed_pct}%)${nl}${emoji} *${tier}* — ${action}${nl}_Triggers:_  trim ≤ 14  ·  BUY ≥ 30  ·  MOAR ≥ 45"
+
+          echo "---"
+          echo "$message"
+          echo "---"
+
+          # 5. POST to Slack
+          jq -n --arg text "$message" '{text: $text, mrkdwn: true}' \
+            | curl -sS -X POST -H 'Content-Type: application/json' \
+                --data-binary @- "$SLACK_WEBHOOK_URL"
+          echo
