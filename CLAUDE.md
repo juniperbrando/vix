@@ -4,7 +4,7 @@ Guidance for Claude Code working in this folder.
 
 ## Project overview
 
-**VIX** is a daily Slack alerter for the CBOE Volatility Index. It fires once per US trading day, posts the EOD VIX close to the user's Slack with a traffic-light indicator, and surfaces the user's 3-number trading rule:
+**VIX** is a Slack alerter for the CBOE Volatility Index. It checks the EOD VIX close once per US trading day, but only posts to the user's Slack when the close moves into a *different tier* of the tier table in `strategy.md`. The post shows the tier change, the action to take, and the full tier table with the current row marked. It encodes the user's 3-number trading rule:
 
 - **VIX ≥ 30** → buy SPY/QQQ
 - **VIX ≥ 45** → buy more
@@ -12,21 +12,26 @@ Guidance for Claude Code working in this folder.
 
 ## Architecture
 
-A single GitHub Actions workflow does everything: fetch, classify, post.
+A single GitHub Actions workflow does everything: fetch, classify, compare with last tier, post on change, persist the tier.
 
 ```
 .github/workflows/vix-eod.yml
   └── cron: 30 21 * * 1-5 (UTC)
-        ├── curl CBOE JSON  → price, change, pct
-        ├── bc/printf       → classify into tier, build mrkdwn message
-        └── curl Slack      → POST {"text": ..., "mrkdwn": true}
+        ├── actions/checkout  → repo incl. state/last_tier
+        ├── curl CBOE JSON    → price, change, pct
+        ├── bc                → classify into tier
+        ├── compare           → tier == state/last_tier ? exit 0 (no post)
+        ├── printf            → "tier changed: X → Y" + action + tier table
+        ├── curl Slack        → POST {"text": ..., "mrkdwn": true}
+        └── git commit+push   → state/last_tier = new tier
 ```
 
 Why GH Actions instead of a Claude Code routine: the routine sandbox blocks outbound network calls to public finance APIs (Yahoo and CBOE both 403'd `WebFetch`). GH Actions runners have unrestricted internet, so plain `curl` just works. Same architectural pattern as `../coc-bot` — only difference is GH Actions hosts it instead of `bick.dk`.
 
 ## Files
 
-- `.github/workflows/vix-eod.yml` — the entire bot. Bash + curl + jq + bc, ~60 lines.
+- `.github/workflows/vix-eod.yml` — the entire bot. Bash + curl + jq + bc, ~120 lines.
+- `state/last_tier` — the tier seen on the last run, committed back by the workflow (`vix-bot`). Delete it to force a "first run" post; edit it to simulate a tier change on the next run. Pull before you push, since the bot commits to `main`.
 - `strategy.md` — the 3-number rule, tier table, historical anchors, failure modes. Read this when adjusting thresholds or interpreting alerts.
 
 ## Schedule
@@ -42,8 +47,11 @@ GH Actions cron drifts up to ~15 min on free tier. Acceptable for EOD reporting.
 ## Run / debug
 
 ```bash
-# Trigger the workflow manually from your machine
+# Trigger the workflow manually from your machine (posts only if the tier changed)
 gh workflow run vix-eod.yml --repo juniperbrando/vix
+
+# Force a Slack post regardless of tier change (e.g. to check formatting)
+gh workflow run vix-eod.yml --repo juniperbrando/vix -f force=true
 
 # Tail the most recent run
 gh run watch --repo juniperbrando/vix

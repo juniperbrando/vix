@@ -18,7 +18,7 @@ The VIX measures 30-day implied volatility on S&P 500 options. It is mean-revert
 - **≥ 30** — fear. Implied vol has roughly doubled. SPX is usually 8–15% off recent highs. Historically the *start* of risk being repriced cheaply.
 - **≥ 45** — panic / forced-selling. Rare. Liquidations dominate price. Almost every print here has been a within-12-months buying opportunity (with one big asterisk — see failure modes).
 
-## Tier table (used by the daily Slack alert)
+## Tier table (the Slack alert posts only when the close moves to a different tier)
 
 | VIX close | Tier | Emoji | Action |
 |---|---|---|---|

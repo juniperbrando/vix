@@ -5,14 +5,27 @@ on:
     # 21:30 UTC = 22:30 CET / 23:30 CEST — ~30 min after US close, every weekday
     - cron: '30 21 * * 1-5'
   workflow_dispatch:  # allow manual triggers from the GH UI / `gh workflow run`
+    inputs:
+      force:
+        description: 'Post to Slack even if the tier has not changed'
+        type: boolean
+        default: false
+
+# The job commits the last-seen tier back to the repo (state/last_tier) so the
+# next run can tell whether the tier changed.
+permissions:
+  contents: write
 
 jobs:
   vix:
     runs-on: ubuntu-latest
     steps:
-      - name: Fetch VIX, classify, post to Slack
+      - uses: actions/checkout@v4
+
+      - name: Fetch VIX, classify, post to Slack on tier change
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          FORCE: ${{ inputs.force }}
         run: |
           set -euo pipefail
 
@@ -39,7 +52,7 @@ jobs:
             exit 0
           fi
 
-          # 2. Classify tier (the user's 3-number rule, mapped to 5 traffic-light tiers)
+          # 2. Classify tier (the tier table in strategy.md)
           if   (( $(bc -l <<<"$price <= 14") )); then tier="Complacency"; emoji="🔴"; action="TRIM / sell";   ping=""
           elif (( $(bc -l <<<"$price <  20") )); then tier="Calm";        emoji="🟢"; action="Hold";          ping=""
           elif (( $(bc -l <<<"$price <  30") )); then tier="Elevated";    emoji="🟡"; action="Watch";         ping=""
@@ -47,24 +60,63 @@ jobs:
           else                                        tier="Panic";       emoji="🚨"; action="*BUY MORE*";    ping="<!channel> "
           fi
 
-          # 3. Arrow + signed change/pct
+          # 3. Compare with the tier from the previous run
+          state_file=state/last_tier
+          prev_tier=$(cat "$state_file" 2>/dev/null || echo "")
+          formatted_price=$(printf "%.2f" "$price")
+          echo "VIX close ${formatted_price} → tier: ${tier} (previous: ${prev_tier:-none})"
+
+          if [[ "$tier" == "$prev_tier" && "${FORCE:-false}" != "true" ]]; then
+            echo "Tier unchanged — nothing posted to Slack."
+            exit 0
+          fi
+
+          # 4. Arrow + signed change/pct
           if   (( $(bc -l <<<"$change > 0") )); then arrow="▲"; signed_change=$(printf "+%.2f" "$change"); signed_pct=$(printf "+%.2f" "$pct")
           elif (( $(bc -l <<<"$change < 0") )); then arrow="▼"; signed_change=$(printf  "%.2f" "$change"); signed_pct=$(printf  "%.2f" "$pct")
           else                                       arrow="▬"; signed_change="0.00";                       signed_pct="0.00"
           fi
 
-          formatted_price=$(printf "%.2f" "$price")
+          # 5. Tier table (mirrors strategy.md), current tier marked with ◀︎
+          mark() { [[ "$1" == "$tier" ]] && echo "   ◀︎ *now*" || echo ""; }
+          table="\`  ≤ 14 \` 🔴 Complacency — TRIM / sell$(mark Complacency)
+          \`14 – 20\` 🟢 Calm — Hold$(mark Calm)
+          \`20 – 30\` 🟡 Elevated — Watch$(mark Elevated)
+          \`30 – 45\` 🟠 Fear — BUY SPY/QQQ$(mark Fear)
+          \`  ≥ 45 \` 🚨 Panic — BUY MORE$(mark Panic)"
+          table=$(sed 's/^ *//' <<<"$table")
 
-          # 4. Build message (\n-separated; mrkdwn-formatted)
+          # 6. Build message
+          if [[ -n "$prev_tier" ]]; then
+            headline="${ping}${emoji} *VIX tier changed:* ${prev_tier} → *${tier}*"
+          else
+            headline="${ping}${emoji} *VIX tier:* *${tier}* (first run, no previous tier on record)"
+          fi
           nl=$'\n'
-          message="${ping}📊 *VIX EOD:* \`${formatted_price}\`  (${arrow} ${signed_change}  ${signed_pct}%)${nl}${emoji} *${tier}* — ${action}${nl}_Triggers:_  trim ≤ 14  ·  BUY ≥ 30  ·  MOAR ≥ 45"
+          message="${headline}${nl}📊 VIX EOD: \`${formatted_price}\`  (${arrow} ${signed_change}  ${signed_pct}%)${nl}👉 *Action: ${action}*${nl}${nl}_Tier table:_${nl}${table}"
 
           echo "---"
           echo "$message"
           echo "---"
 
-          # 5. POST to Slack
+          # 7. POST to Slack
           jq -n --arg text "$message" '{text: $text, mrkdwn: true}' \
             | curl -sS "${CURL_OPTS[@]}" -X POST -H 'Content-Type: application/json' \
                 --data-binary @- "$SLACK_WEBHOOK_URL"
           echo
+
+          # 8. Persist the new tier for the next run
+          mkdir -p "$(dirname "$state_file")"
+          echo "$tier" > "$state_file"
+
+      - name: Commit updated tier state
+        run: |
+          if git diff --quiet -- state/ && [[ -z "$(git ls-files --others --exclude-standard state/)" ]]; then
+            echo "No state change to commit."
+            exit 0
+          fi
+          git config user.name  "vix-bot"
+          git config user.email "vix-bot@users.noreply.github.com"
+          git add state/
+          git commit -m "state: last tier → $(cat state/last_tier)"
+          git push
