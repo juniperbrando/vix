@@ -77,7 +77,7 @@ jobs:
               *)               fg_emoji="🧭"; fg_label="$fg_rating"    ;;
             esac
             if (( fg_int <= 25 )); then fg_zone="extreme_fear"; else fg_zone="normal"; fi
-            fg_line="${fg_emoji} CNN Fear & Greed: \`${fg_int}\` ${fg_label}  _(0 = extreme fear · 100 = extreme greed — scale is opposite of VIX)_"
+            fg_line="${fg_emoji} <https://edition.cnn.com/markets/fear-and-greed|CNN Fear & Greed>: \`${fg_int}\` *${fg_label}*"
             echo "CNN Fear & Greed: ${fg_int} (${fg_rating}) → zone: ${fg_zone}"
           else
             echo "::warning::CNN Fear & Greed unavailable — continuing without it."
