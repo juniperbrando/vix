@@ -52,6 +52,33 @@ jobs:
             exit 0
           fi
 
+          # 2b. CNN Fear & Greed (0 = extreme fear, 100 = extreme greed). Best-effort
+          # context only — it is NOT part of the tier logic. CNN answers 418 to plain
+          # curl, so we send browser-like headers. Any failure just drops the line.
+          fg_line=""
+          fg_json=$(curl -sS --connect-timeout 15 --max-time 30 --retry 2 --retry-delay 5 --location \
+            -H 'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36' \
+            -H 'Accept: application/json, text/plain, */*' \
+            -H 'Referer: https://edition.cnn.com/markets/fear-and-greed' \
+            -H 'Origin: https://edition.cnn.com' \
+            'https://production.dataviz.cnn.io/index/fearandgreed/current' 2>/dev/null || true)
+          if fg_score=$(jq -er '.score' <<<"$fg_json" 2>/dev/null); then
+            fg_rating=$(jq -r '.rating' <<<"$fg_json")
+            case "$fg_rating" in
+              "extreme fear")  fg_emoji="😱"; fg_label="Extreme Fear"  ;;
+              fear)            fg_emoji="😨"; fg_label="Fear"          ;;
+              neutral)         fg_emoji="😐"; fg_label="Neutral"       ;;
+              greed)           fg_emoji="😏"; fg_label="Greed"         ;;
+              "extreme greed") fg_emoji="🤑"; fg_label="Extreme Greed" ;;
+              *)               fg_emoji="🧭"; fg_label="$fg_rating"    ;;
+            esac
+            nl=$'\n'
+            fg_line="${nl}${fg_emoji} CNN Fear & Greed: \`$(printf "%.0f" "$fg_score")\` ${fg_label}  _(0 = extreme fear · 100 = extreme greed — scale is opposite of VIX)_"
+            echo "CNN Fear & Greed: ${fg_score} (${fg_rating})"
+          else
+            echo "::warning::CNN Fear & Greed unavailable — posting without it."
+          fi
+
           # 2. Classify tier (the tier table in strategy.md)
           if   (( $(bc -l <<<"$price <= 14") )); then tier="Complacency"; emoji="🔴"; action="TRIM / sell";   ping=""
           elif (( $(bc -l <<<"$price <  20") )); then tier="Calm";        emoji="🟢"; action="Hold";          ping=""
@@ -87,13 +114,15 @@ jobs:
           table=$(sed 's/^ *//' <<<"$table")
 
           # 6. Build message
-          if [[ -n "$prev_tier" ]]; then
+          if [[ "$tier" == "$prev_tier" ]]; then
+            headline="${ping}${emoji} *VIX tier:* *${tier}* (unchanged — forced post)"
+          elif [[ -n "$prev_tier" ]]; then
             headline="${ping}${emoji} *VIX tier changed:* ${prev_tier} → *${tier}*"
           else
             headline="${ping}${emoji} *VIX tier:* *${tier}* (first run, no previous tier on record)"
           fi
           nl=$'\n'
-          message="${headline}${nl}📊 VIX EOD: \`${formatted_price}\`  (${arrow} ${signed_change}  ${signed_pct}%)${nl}👉 *Action: ${action}*${nl}${nl}_Tier table:_${nl}${table}"
+          message="${headline}${nl}📊 VIX EOD: \`${formatted_price}\`  (${arrow} ${signed_change}  ${signed_pct}%)${fg_line}${nl}👉 *Action: ${action}*${nl}${nl}_Tier table:_${nl}${table}"
 
           echo "---"
           echo "$message"

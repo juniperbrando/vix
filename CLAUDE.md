@@ -4,7 +4,7 @@ Guidance for Claude Code working in this folder.
 
 ## Project overview
 
-**VIX** is a Slack alerter for the CBOE Volatility Index. It checks the EOD VIX close once per US trading day, but only posts to the user's Slack when the close moves into a *different tier* of the tier table in `strategy.md`. The post shows the tier change, the action to take, and the full tier table with the current row marked. It encodes the user's 3-number trading rule:
+**VIX** is a Slack alerter for the CBOE Volatility Index. It checks the EOD VIX close once per US trading day, but only posts to the user's Slack when the close moves into a *different tier* of the tier table in `strategy.md`. The post shows the tier change, the action to take, and the full tier table with the current row marked. It also shows CNN's Fear & Greed Index as context (0 = extreme fear, 100 = extreme greed, i.e. the opposite scale of VIX). F&G is never part of the tier logic. It encodes the user's 3-number trading rule:
 
 - **VIX ≥ 30** → buy SPY/QQQ
 - **VIX ≥ 45** → buy more
@@ -19,6 +19,7 @@ A single GitHub Actions workflow does everything: fetch, classify, compare with 
   └── cron: 30 21 * * 1-5 (UTC)
         ├── actions/checkout  → repo incl. state/last_tier
         ├── curl CBOE JSON    → price, change, pct
+        ├── curl CNN F&G      → Fear & Greed score (context line only, best-effort)
         ├── bc                → classify into tier
         ├── compare           → tier == state/last_tier ? exit 0 (no post)
         ├── printf            → "tier changed: X → Y" + action + tier table
@@ -58,6 +59,9 @@ gh run watch --repo juniperbrando/vix
 
 # Sanity-check the data source (no auth, no rate limit at this volume)
 curl -sS 'https://cdn-api.cboe.com/api/global/delayed_quotes/quotes/_VIX.json' | jq '.data | {current_price, price_change, price_change_percent}'
+
+# Sanity-check CNN Fear & Greed (answers 418 "I'm a teapot" without browser-like headers)
+curl -sS -A 'Mozilla/5.0' -H 'Accept: application/json' -H 'Referer: https://edition.cnn.com/markets/fear-and-greed' -H 'Origin: https://edition.cnn.com' 'https://production.dataviz.cnn.io/index/fearandgreed/current' | jq '{score, rating}'
 
 # Sanity-check Slack delivery
 curl -sS -X POST -H 'Content-Type: application/json' \
