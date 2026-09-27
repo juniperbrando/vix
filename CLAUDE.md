@@ -49,7 +49,7 @@ gh workflow run vix-eod.yml --repo juniperbrando/vix
 gh run watch --repo juniperbrando/vix
 
 # Sanity-check the data source (no auth, no rate limit at this volume)
-curl -sS 'https://cdn.cboe.com/api/global/delayed_quotes/quotes/_VIX.json' | jq '.data | {current_price, price_change, price_change_percent}'
+curl -sS 'https://cdn-api.cboe.com/api/global/delayed_quotes/quotes/_VIX.json' | jq '.data | {current_price, price_change, price_change_percent}'
 
 # Sanity-check Slack delivery
 curl -sS -X POST -H 'Content-Type: application/json' \
