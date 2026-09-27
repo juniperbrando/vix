@@ -4,7 +4,7 @@ Guidance for Claude Code working in this folder.
 
 ## Project overview
 
-**VIX** is a Slack alerter for the CBOE Volatility Index. It checks the EOD VIX close once per US trading day, but only posts to the user's Slack when the close moves into a *different tier* of the tier table in `strategy.md`. The post shows the tier change, the action to take, and the full tier table with the current row marked. It also shows CNN's Fear & Greed Index as context (0 = extreme fear, 100 = extreme greed, i.e. the opposite scale of VIX). F&G is never part of the tier logic. A second line says whether F&G confirms the VIX signal (Fear/Panic + F&G ≤ 25, or Complacency + F&G ≥ 75), does not confirm it, or is at an extreme while VIX is not. It encodes the user's 3-number trading rule:
+**VIX** is a Slack alerter for the CBOE Volatility Index. It checks the EOD VIX close once per US trading day, but only posts to the user's Slack when (a) the close moves into a *different tier* of the tier table in `strategy.md`, or (b) CNN's Fear & Greed Index *enters* Extreme Fear (≤ 25) as an early warning that the VIX buy trigger may be near. The post shows the tier change, the action to take, and the full tier table with the current row marked. It also shows CNN's Fear & Greed Index as context (0 = extreme fear, 100 = extreme greed, i.e. the opposite scale of VIX). F&G is never part of the tier logic. A second line says whether F&G confirms the VIX signal (Fear/Panic + F&G ≤ 25, or Complacency + F&G ≥ 75), does not confirm it, or is at an extreme while VIX is not. It encodes the user's 3-number trading rule:
 
 - **VIX ≥ 30** → buy SPY/QQQ
 - **VIX ≥ 45** → buy more
@@ -12,19 +12,19 @@ Guidance for Claude Code working in this folder.
 
 ## Architecture
 
-A single GitHub Actions workflow does everything: fetch, classify, compare with last tier, post on change, persist the tier.
+A single GitHub Actions workflow does everything: fetch, classify, compare with last state, post on change, persist state.
 
 ```
 .github/workflows/vix-eod.yml
   └── cron: 30 21 * * 1-5 (UTC)
-        ├── actions/checkout  → repo incl. state/last_tier
+        ├── actions/checkout  → repo incl. state/last_tier + state/last_fg_zone
         ├── curl CBOE JSON    → price, change, pct
         ├── curl CNN F&G      → Fear & Greed score (context line only, best-effort)
         ├── bc                → classify into tier
-        ├── compare           → tier == state/last_tier ? exit 0 (no post)
-        ├── printf            → "tier changed: X → Y" + action + tier table
+        ├── compare           → post if tier changed OR F&G entered Extreme Fear, else exit 0
+        ├── printf            → headline + VIX close + F&G line/verdict + action + tier table
         ├── curl Slack        → POST {"text": ..., "mrkdwn": true}
-        └── git commit+push   → state/last_tier = new tier
+        └── git commit+push   → state/ (written every run, committed only when changed)
 ```
 
 Why GH Actions instead of a Claude Code routine: the routine sandbox blocks outbound network calls to public finance APIs (Yahoo and CBOE both 403'd `WebFetch`). GH Actions runners have unrestricted internet, so plain `curl` just works. Same architectural pattern as `../coc-bot` — only difference is GH Actions hosts it instead of `bick.dk`.
@@ -32,7 +32,7 @@ Why GH Actions instead of a Claude Code routine: the routine sandbox blocks outb
 ## Files
 
 - `.github/workflows/vix-eod.yml` — the entire bot. Bash + curl + jq + bc, ~120 lines.
-- `state/last_tier` — the tier seen on the last run, committed back by the workflow (`vix-bot`). Delete it to force a "first run" post; edit it to simulate a tier change on the next run. Pull before you push, since the bot commits to `main`.
+- `state/last_tier`, `state/last_fg_zone` — VIX tier and F&G zone (`extreme_fear` | `normal`) seen on the last run, committed back by the workflow (`vix-bot`). Delete `last_tier` to force a "first run" post; edit either to simulate a change on the next run. Pull before you push, since the bot commits to `main`.
 - `strategy.md` — the 3-number rule, tier table, historical anchors, failure modes. Read this when adjusting thresholds or interpreting alerts.
 
 ## Schedule
@@ -48,10 +48,10 @@ GH Actions cron drifts up to ~15 min on free tier. Acceptable for EOD reporting.
 ## Run / debug
 
 ```bash
-# Trigger the workflow manually from your machine (posts only if the tier changed)
+# Trigger the workflow manually from your machine (posts only if tier changed / F&G entered Extreme Fear)
 gh workflow run vix-eod.yml --repo juniperbrando/vix
 
-# Force a Slack post regardless of tier change (e.g. to check formatting)
+# Force a Slack post regardless of changes (e.g. to check formatting)
 gh workflow run vix-eod.yml --repo juniperbrando/vix -f force=true
 
 # Tail the most recent run

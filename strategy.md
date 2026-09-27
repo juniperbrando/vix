@@ -65,9 +65,9 @@ Trimming on 14: scale out toward neutral, never go net short on a 14 print alone
 - Not a timing tool with day-level precision. It identifies regimes, not bottoms.
 - Not predictive. It is implied (forward-looking) vol but ultimately backward-anchored to recent realized vol plus a risk premium.
 
-## CNN Fear & Greed (context only, not a trigger)
+## CNN Fear & Greed (context, plus one early-warning trigger)
 
-Shown in the Slack post as a second opinion. Scale is the *opposite* of VIX: 0 = extreme fear, 100 = extreme greed. It is a composite of seven indicators (VIX vs 50-day MA is only one of them), swings faster than VIX and has no historically anchored thresholds, so it never drives the tier logic.
+Shown in the Slack post as a second opinion, and the bot also posts a "👀 watch" message (no @channel) the day F&G *enters* Extreme Fear (≤ 25), since it tends to lead the VIX ≥ 30 trigger by a few days. Leaving Extreme Fear, or any other F&G zone change, never triggers a post — those swings are too frequent. Scale is the *opposite* of VIX: 0 = extreme fear, 100 = extreme greed. It is a composite of seven indicators (VIX vs 50-day MA is only one of them), swings faster than VIX and has no historically anchored thresholds, so it never drives the tier logic.
 
 Contrarian read, mapped to the VIX rule:
 

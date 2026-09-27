@@ -7,12 +7,13 @@ on:
   workflow_dispatch:  # allow manual triggers from the GH UI / `gh workflow run`
     inputs:
       force:
-        description: 'Post to Slack even if the tier has not changed'
+        description: 'Post to Slack even if nothing changed'
         type: boolean
         default: false
 
-# The job commits the last-seen tier back to the repo (state/last_tier) so the
-# next run can tell whether the tier changed.
+# The job commits state/ back to the repo so the next run can tell what changed:
+#   state/last_tier     — VIX tier seen on the last run
+#   state/last_fg_zone  — CNN Fear & Greed zone on the last run (extreme_fear | normal)
 permissions:
   contents: write
 
@@ -22,12 +23,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Fetch VIX, classify, post to Slack on tier change
+      - name: Fetch VIX + F&G, classify, post to Slack on change
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           FORCE: ${{ inputs.force }}
         run: |
           set -euo pipefail
+          nl=$'\n'
 
           # Shared curl hardening: fail fast on a stalled connection, retry transient
           # network blips (e.g. hooks.slack.com connect timeouts) instead of hanging
@@ -52,10 +54,11 @@ jobs:
             exit 0
           fi
 
-          # 2b. CNN Fear & Greed (0 = extreme fear, 100 = extreme greed). Best-effort
-          # context only — it is NOT part of the tier logic. CNN answers 418 to plain
-          # curl, so we send browser-like headers. Any failure just drops the line.
-          fg_line=""
+          # 2. CNN Fear & Greed (0 = extreme fear, 100 = extreme greed). Context +
+          # an "entered Extreme Fear" early-warning trigger — never part of the tier
+          # logic. CNN answers 418 to plain curl, so we send browser-like headers.
+          # Any failure just drops the F&G line and leaves its state untouched.
+          fg_line=""; fg_zone=""
           fg_json=$(curl -sS --connect-timeout 15 --max-time 30 --retry 2 --retry-delay 5 --location \
             -H 'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36' \
             -H 'Accept: application/json, text/plain, */*' \
@@ -64,6 +67,7 @@ jobs:
             'https://production.dataviz.cnn.io/index/fearandgreed/current' 2>/dev/null || true)
           if fg_score=$(jq -er '.score' <<<"$fg_json" 2>/dev/null); then
             fg_rating=$(jq -r '.rating' <<<"$fg_json")
+            fg_int=$(printf "%.0f" "$fg_score")
             case "$fg_rating" in
               "extreme fear")  fg_emoji="😱"; fg_label="Extreme Fear"  ;;
               fear)            fg_emoji="😨"; fg_label="Fear"          ;;
@@ -72,39 +76,51 @@ jobs:
               "extreme greed") fg_emoji="🤑"; fg_label="Extreme Greed" ;;
               *)               fg_emoji="🧭"; fg_label="$fg_rating"    ;;
             esac
-            nl=$'\n'
-            fg_line="${nl}${fg_emoji} CNN Fear & Greed: \`$(printf "%.0f" "$fg_score")\` ${fg_label}  _(0 = extreme fear · 100 = extreme greed — scale is opposite of VIX)_"
-            echo "CNN Fear & Greed: ${fg_score} (${fg_rating})"
+            if (( fg_int <= 25 )); then fg_zone="extreme_fear"; else fg_zone="normal"; fi
+            fg_line="${fg_emoji} CNN Fear & Greed: \`${fg_int}\` ${fg_label}  _(0 = extreme fear · 100 = extreme greed — scale is opposite of VIX)_"
+            echo "CNN Fear & Greed: ${fg_int} (${fg_rating}) → zone: ${fg_zone}"
           else
-            echo "::warning::CNN Fear & Greed unavailable — posting without it."
+            echo "::warning::CNN Fear & Greed unavailable — continuing without it."
           fi
 
-          # 2. Classify tier (the tier table in strategy.md)
+          # 3. Classify VIX tier (the tier table in strategy.md)
           if   (( $(bc -l <<<"$price <= 14") )); then tier="Complacency"; emoji="🔴"; action="TRIM / sell";   ping=""
           elif (( $(bc -l <<<"$price <  20") )); then tier="Calm";        emoji="🟢"; action="Hold";          ping=""
           elif (( $(bc -l <<<"$price <  30") )); then tier="Elevated";    emoji="🟡"; action="Watch";         ping=""
           elif (( $(bc -l <<<"$price <  45") )); then tier="Fear";        emoji="🟠"; action="*BUY* SPY/QQQ"; ping="<!channel> "
           else                                        tier="Panic";       emoji="🚨"; action="*BUY MORE*";    ping="<!channel> "
           fi
-
-          # 3. Compare with the tier from the previous run
-          state_file=state/last_tier
-          prev_tier=$(cat "$state_file" 2>/dev/null || echo "")
           formatted_price=$(printf "%.2f" "$price")
-          echo "VIX close ${formatted_price} → tier: ${tier} (previous: ${prev_tier:-none})"
 
-          if [[ "$tier" == "$prev_tier" && "${FORCE:-false}" != "true" ]]; then
-            echo "Tier unchanged — nothing posted to Slack."
+          # 4. Compare with previous run and decide whether to post
+          mkdir -p state
+          prev_tier=$(cat state/last_tier    2>/dev/null || echo "")
+          prev_fg=$(cat   state/last_fg_zone 2>/dev/null || echo "")
+          echo "VIX close ${formatted_price} → tier: ${tier} (previous: ${prev_tier:-none}); F&G zone: ${fg_zone:-n/a} (previous: ${prev_fg:-none})"
+
+          # Persist new state now. If the Slack POST below fails the step fails and
+          # the commit step is skipped, so a failed post is retried next run.
+          echo "$tier" > state/last_tier
+          [[ -n "$fg_zone" ]] && echo "$fg_zone" > state/last_fg_zone
+
+          reason=""
+          if   [[ "$tier" != "$prev_tier" ]];                                             then reason="tier"
+          elif [[ "$fg_zone" == "extreme_fear" && "$prev_fg" != "extreme_fear" ]];        then reason="fg"
+          elif [[ "${FORCE:-false}" == "true" ]];                                         then reason="force"
+          fi
+          if [[ -z "$reason" ]]; then
+            echo "No tier change, F&G did not enter Extreme Fear — nothing posted to Slack."
             exit 0
           fi
+          echo "Posting (reason: ${reason})"
 
-          # 4. Arrow + signed change/pct
+          # 5. Arrow + signed change/pct
           if   (( $(bc -l <<<"$change > 0") )); then arrow="▲"; signed_change=$(printf "+%.2f" "$change"); signed_pct=$(printf "+%.2f" "$pct")
           elif (( $(bc -l <<<"$change < 0") )); then arrow="▼"; signed_change=$(printf  "%.2f" "$change"); signed_pct=$(printf  "%.2f" "$pct")
           else                                       arrow="▬"; signed_change="0.00";                       signed_pct="0.00"
           fi
 
-          # 5. Tier table (mirrors strategy.md), current tier marked with ◀︎
+          # 6. Tier table (mirrors strategy.md), current tier marked with ◀︎
           mark() { [[ "$1" == "$tier" ]] && echo "   ◀︎ *now*" || echo ""; }
           table="\`  ≤ 14 \` 🔴 Complacency — TRIM / sell$(mark Complacency)
           \`14 – 20\` 🟢 Calm — Hold$(mark Calm)
@@ -113,11 +129,10 @@ jobs:
           \`  ≥ 45 \` 🚨 Panic — BUY MORE$(mark Panic)"
           table=$(sed 's/^ *//' <<<"$table")
 
-          # 5b. Does CNN F&G agree with the VIX tier? (contrarian read: ≤25 = extreme
+          # 7. Does F&G agree with the VIX tier? (contrarian read: ≤25 = extreme
           # fear ≈ VIX ≥30; ≥75 = extreme greed ≈ VIX ≤14). Context only.
-          fg_verdict=""
           if [[ -n "$fg_line" ]]; then
-            fg_int=$(printf "%.0f" "$fg_score")
+            fg_verdict=""
             case "$tier" in
               Fear|Panic)
                 if (( fg_int <= 25 )); then fg_verdict="✅ F&G confirms — both say panic. Buy per the rule."
@@ -133,34 +148,31 @@ jobs:
                 fi ;;
             esac
             [[ -n "$fg_verdict" ]] && fg_line="${fg_line}${nl}${fg_verdict}"
+            fg_line="${nl}${fg_line}"
           fi
 
-          # 6. Build message
-          if [[ "$tier" == "$prev_tier" ]]; then
-            headline="${ping}${emoji} *VIX tier:* *${tier}* (unchanged — forced post)"
-          elif [[ -n "$prev_tier" ]]; then
-            headline="${ping}${emoji} *VIX tier changed:* ${prev_tier} → *${tier}*"
-          else
-            headline="${ping}${emoji} *VIX tier:* *${tier}* (first run, no previous tier on record)"
-          fi
-          nl=$'\n'
+          # 8. Build message
+          case "$reason" in
+            tier)
+              if [[ -n "$prev_tier" ]]; then headline="${ping}${emoji} *VIX tier changed:* ${prev_tier} → *${tier}*"
+              else                           headline="${ping}${emoji} *VIX tier:* *${tier}* (first run, no previous tier on record)"
+              fi ;;
+            fg)    headline="👀 *CNN Fear & Greed entered Extreme Fear* — VIX tier still ${emoji} *${tier}*" ;;
+            force) headline="${ping}${emoji} *VIX tier:* *${tier}* (unchanged — forced post)" ;;
+          esac
           message="${headline}${nl}📊 VIX EOD: \`${formatted_price}\`  (${arrow} ${signed_change}  ${signed_pct}%)${fg_line}${nl}👉 *Action: ${action}*${nl}${nl}_Tier table:_${nl}${table}"
 
           echo "---"
           echo "$message"
           echo "---"
 
-          # 7. POST to Slack
+          # 9. POST to Slack
           jq -n --arg text "$message" '{text: $text, mrkdwn: true}' \
             | curl -sS "${CURL_OPTS[@]}" -X POST -H 'Content-Type: application/json' \
                 --data-binary @- "$SLACK_WEBHOOK_URL"
           echo
 
-          # 8. Persist the new tier for the next run
-          mkdir -p "$(dirname "$state_file")"
-          echo "$tier" > "$state_file"
-
-      - name: Commit updated tier state
+      - name: Commit updated state
         run: |
           if git diff --quiet -- state/ && [[ -z "$(git ls-files --others --exclude-standard state/)" ]]; then
             echo "No state change to commit."
@@ -169,5 +181,5 @@ jobs:
           git config user.name  "vix-bot"
           git config user.email "vix-bot@users.noreply.github.com"
           git add state/
-          git commit -m "state: last tier → $(cat state/last_tier)"
+          git commit -m "state: tier=$(cat state/last_tier) fg=$(cat state/last_fg_zone 2>/dev/null || echo n/a)"
           git push
