@@ -22,7 +22,7 @@ A single GitHub Actions workflow does everything: fetch, classify, compare with 
         ├── curl CNN F&G      → Fear & Greed score (context line only, best-effort)
         ├── bc                → classify into tier
         ├── compare           → post if tier changed OR F&G entered Extreme Fear, else exit 0
-        ├── printf            → headline + VIX close + F&G line/verdict + action + tier table
+        ├── printf            → headline + VIX close + action + tier table + (———) F&G line/verdict
         ├── curl Slack        → POST {"text": ..., "mrkdwn": true}
         └── git commit+push   → state/ (written every run, committed only when changed)
 ```

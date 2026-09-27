@@ -148,7 +148,8 @@ jobs:
                 fi ;;
             esac
             [[ -n "$fg_verdict" ]] && fg_line="${fg_line}${nl}${fg_verdict}"
-            fg_line="${nl}${fg_line}"
+            # Separate block under the tier table — F&G is a different thing from VIX
+            fg_line="${nl}${nl}———${nl}${fg_line}"
           fi
 
           # 8. Build message
@@ -160,7 +161,7 @@ jobs:
             fg)    headline="👀 *CNN Fear & Greed entered Extreme Fear* — VIX tier still ${emoji} *${tier}*" ;;
             force) headline="${ping}${emoji} *VIX tier:* *${tier}* (unchanged — forced post)" ;;
           esac
-          message="${headline}${nl}📊 VIX EOD: \`${formatted_price}\`  (${arrow} ${signed_change}  ${signed_pct}%)${fg_line}${nl}👉 *Action: ${action}*${nl}${nl}_Tier table:_${nl}${table}"
+          message="${headline}${nl}📊 VIX EOD: \`${formatted_price}\`  (${arrow} ${signed_change}  ${signed_pct}%)${nl}👉 *Action: ${action}*${nl}${nl}_Tier table:_${nl}${table}${fg_line}"
 
           echo "---"
           echo "$message"
