@@ -113,6 +113,28 @@ jobs:
           \`  ≥ 45 \` 🚨 Panic — BUY MORE$(mark Panic)"
           table=$(sed 's/^ *//' <<<"$table")
 
+          # 5b. Does CNN F&G agree with the VIX tier? (contrarian read: ≤25 = extreme
+          # fear ≈ VIX ≥30; ≥75 = extreme greed ≈ VIX ≤14). Context only.
+          fg_verdict=""
+          if [[ -n "$fg_line" ]]; then
+            fg_int=$(printf "%.0f" "$fg_score")
+            case "$tier" in
+              Fear|Panic)
+                if (( fg_int <= 25 )); then fg_verdict="✅ F&G confirms — both say panic. Buy per the rule."
+                else                        fg_verdict="⚠️ F&G does *not* confirm (${fg_int}, not Extreme Fear) — softer signal. Consider the smallest tranche first."
+                fi ;;
+              Complacency)
+                if (( fg_int >= 75 )); then fg_verdict="✅ F&G confirms — both say complacency. Trim signal is stronger than usual."
+                else                        fg_verdict="⚠️ F&G does *not* confirm (${fg_int}, not Extreme Greed) — softer trim signal."
+                fi ;;
+              *)
+                if   (( fg_int <= 25 )); then fg_verdict="👀 F&G is in Extreme Fear while VIX is not — no buy signal yet, but VIX often follows within days."
+                elif (( fg_int >= 75 )); then fg_verdict="👀 F&G is in Extreme Greed while VIX is not — trim zone may be approaching."
+                fi ;;
+            esac
+            [[ -n "$fg_verdict" ]] && fg_line="${fg_line}${nl}${fg_verdict}"
+          fi
+
           # 6. Build message
           if [[ "$tier" == "$prev_tier" ]]; then
             headline="${ping}${emoji} *VIX tier:* *${tier}* (unchanged — forced post)"

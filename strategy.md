@@ -64,3 +64,18 @@ Trimming on 14: scale out toward neutral, never go net short on a 14 print alone
 - Not a directional indicator. High VIX doesn't mean "go down further" — it means "options are expensive."
 - Not a timing tool with day-level precision. It identifies regimes, not bottoms.
 - Not predictive. It is implied (forward-looking) vol but ultimately backward-anchored to recent realized vol plus a risk premium.
+
+## CNN Fear & Greed (context only, not a trigger)
+
+Shown in the Slack post as a second opinion. Scale is the *opposite* of VIX: 0 = extreme fear, 100 = extreme greed. It is a composite of seven indicators (VIX vs 50-day MA is only one of them), swings faster than VIX and has no historically anchored thresholds, so it never drives the tier logic.
+
+Contrarian read, mapped to the VIX rule:
+
+| VIX tier | F&G | Read |
+|---|---|---|
+| Fear / Panic (≥ 30) | ≤ 25 Extreme Fear | ✅ Confirms — buy per the rule |
+| Fear / Panic (≥ 30) | > 25 | ⚠️ Softer signal — smallest tranche first |
+| Complacency (≤ 14) | ≥ 75 Extreme Greed | ✅ Confirms — trim signal stronger than usual |
+| Complacency (≤ 14) | < 75 | ⚠️ Softer trim signal |
+| Calm / Elevated | ≤ 25 | 👀 Not a buy signal, but VIX often follows within days |
+| Calm / Elevated | ≥ 75 | 👀 Trim zone may be approaching |
