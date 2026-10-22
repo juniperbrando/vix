@@ -43,7 +43,7 @@ GH Actions cron drifts up to ~15 min on free tier. Acceptable for EOD reporting.
 
 ## Secrets
 
-- `SLACK_WEBHOOK_URL` — incoming-webhook URL for the target channel (set via `gh secret set SLACK_WEBHOOK_URL --repo juniperbrando/vix --body '<url>'`). Currently reuses the same `test-staver` webhook as `../coc-bot/Bot/properties.php:14`.
+- `SLACK_WEBHOOK_URL` — incoming-webhook URL for the target channel (set via `gh secret set SLACK_WEBHOOK_URL --repo juniperbrando/vix --body '<url>'`). Currently points at `#dollarbills` in the `12-angrymen` workspace (Slack app "VIX bot", incoming-webhook scope only). Free plan caps the workspace at 10 apps.
 
 ## Run / debug
 
