@@ -18,7 +18,7 @@ A single GitHub Actions workflow does everything: fetch, classify, compare with 
 .github/workflows/vix-eod.yml
   └── cron: 30 21 * * 1-5 (UTC)
         ├── actions/checkout  → repo incl. state/last_tier + state/last_fg_zone
-        ├── curl CBOE JSON    → price, change, pct
+        ├── curl CBOE JSON    → price, change, pct (browser headers; falls back to FRED VIXCLS, ~1 day lag)
         ├── curl CNN F&G      → Fear & Greed score (context line only, best-effort)
         ├── bc                → classify into tier
         ├── compare           → post if tier changed OR F&G entered Extreme Fear, else exit 0
