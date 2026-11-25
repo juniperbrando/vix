@@ -1,11 +1,14 @@
 name: VIX Slack alert
 
-# No `schedule:` trigger on purpose — GH Actions cron started runs 5–8 h late.
-# Instead scheduler/trigger.php on bick.dk calls workflow_dispatch once per US
-# trading day at 15:00 New York time (1 h before US close, ~21:00 Danish time),
-# so there is still time to act the same session. One run per day → at most
-# one Slack post per day.
+# Main check: scheduler/trigger.php on bick.dk calls workflow_dispatch once per
+# US trading day at 15:00 New York time (1 h before US close, ~21:00 Danish
+# time), so there is still time to act the same session.
+# Backstop: the GH cron below reads the close. It starts 5–8 h late in practice,
+# and only posts if the close is in a different tier than the 15:00 reading (or
+# if bick.dk didn't fire) — so normally it stays silent.
 on:
+  schedule:
+    - cron: '30 21 * * 1-5'  # 21:30 UTC, after US close (actually starts much later)
   workflow_dispatch:  # fired by bick.dk, the GH UI, or `gh workflow run`
     inputs:
       force:

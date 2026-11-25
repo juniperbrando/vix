@@ -2,9 +2,11 @@
 // Fires the VIX GitHub Actions workflow once per US trading day at 15:00
 // New York time (1 h before US close, ~21:00 Danish time).
 //
-// Run it HOURLY from cron on bick.dk; the script itself decides when to fire,
-// so US/EU daylight-saving mismatches and the host's timezone don't matter:
-//   0 * * * *  php /path/to/scheduler/trigger.php
+// 15:00 NY is 21:00 Danish time, but 20:00 for a few weeks each spring/autumn
+// when US and EU DST differ. So cron runs at both hours and the script itself
+// fires only on the right one:
+//   host in Danish time: 0 20,21 * * 1-5  php /path/to/scheduler/trigger.php
+//   host in UTC:         0 19,20 * * 1-5  php /path/to/scheduler/trigger.php
 //
 // Test from the shell (skips the time check):  php trigger.php --now
 //

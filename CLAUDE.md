@@ -12,11 +12,13 @@ Guidance for Claude Code working in this folder.
 
 ## Architecture
 
-A single GitHub Actions workflow does everything: fetch, classify, compare with last state, post on change, persist state. It has no GH `schedule:` (GH cron started runs 5–8 h late); a cron on bick.dk fires it via `workflow_dispatch`.
+A single GitHub Actions workflow does everything: fetch, classify, compare with last state, post on change, persist state. A cron on bick.dk fires it via `workflow_dispatch` at 15:00 NY. GH's own `schedule:` (21:30 UTC) stays as a post-close backstop — it starts 5–8 h late, so it can't be the main trigger, but it catches final-hour tier changes and a dead bick.dk cron (it only posts if the close tier differs from the stored one).
 
 ```
-bick.dk cron (hourly) → scheduler/trigger.php → fires only at 15:xx New York time, Mon–Fri
+bick.dk cron (0 20,21 * * 1-5 Danish time) → scheduler/trigger.php → fires only at 15:xx New York time, Mon–Fri
   └── POST api.github.com/.../workflows/vix-eod.yml/dispatches
+GH cron 30 21 * * 1-5 (UTC, backstop on the close, starts hours late)
+  └──
 .github/workflows/vix-eod.yml
         ├── actions/checkout  → repo incl. state/last_tier + state/last_fg_zone
         ├── curl CBOE JSON    → price, change, pct (browser headers; falls back to FRED VIXCLS, ~1 day lag)
@@ -39,7 +41,7 @@ Why GH Actions instead of a Claude Code routine: the routine sandbox blocks outb
 
 ## Schedule
 
-One run per weekday at 15:00 America/New_York (= 21:00 Danish time, 20:00 during the few weeks each spring/autumn when US and EU DST differ). The time check lives in `trigger.php`, so the bick.dk cron is just `0 * * * *`. CBOE quotes are ~15 min delayed, so the post reflects ~14:45 NY; the post shows the quote's "as of" time. CBOE's endpoint does not show extended-hours VIX — checks before 9:30 NY would only see yesterday's close. A tier change in the final hour is picked up the next day. US holidays: the quote is stale → no tier change → no post.
+One run per weekday at 15:00 America/New_York (= 21:00 Danish time, 20:00 during the few weeks each spring/autumn when US and EU DST differ). The time check lives in `trigger.php`; the bick.dk cron runs at both candidate hours (`0 20,21 * * 1-5` in Danish time, `0 19,20` in UTC) and the script fires only on the right one. CBOE quotes are ~15 min delayed, so the post reflects ~14:45 NY; the post shows the quote's "as of" time. CBOE's endpoint does not show extended-hours VIX — checks before 9:30 NY would only see yesterday's close. A tier change in the final hour is caught by the GH-cron backstop on the close (arrives late at night / early morning Danish time). US holidays: the quote is stale → no tier change → no post.
 
 ## Secrets
 
