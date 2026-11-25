@@ -18,7 +18,7 @@ A single GitHub Actions workflow does everything: fetch, classify, compare with 
 bick.dk cron (0 20,21 * * 1-5 Danish time) → scheduler/trigger.php → fires only at 15:xx New York time, Mon–Fri
   └── POST api.github.com/.../workflows/vix-eod.yml/dispatches
 GH cron 30 21 * * 1-5 (UTC, backstop on the close, starts hours late)
-  └──
+  └── runs the same workflow:
 .github/workflows/vix-eod.yml
         ├── actions/checkout  → repo incl. state/last_tier + state/last_fg_zone
         ├── curl CBOE JSON    → price, change, pct (browser headers; falls back to FRED VIXCLS, ~1 day lag)
