@@ -10,6 +10,8 @@
 //
 // Needs scheduler/config.php (gitignored) — copy config.example.php.
 
+if (PHP_SAPI !== 'cli') { http_response_code(404); exit; } // cron only, never via the web
+
 $config = require __DIR__ . '/config.php';
 
 $ny    = new DateTime('now', new DateTimeZone('America/New_York'));

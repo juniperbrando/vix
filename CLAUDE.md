@@ -4,7 +4,7 @@ Guidance for Claude Code working in this folder.
 
 ## Project overview
 
-**VIX** is a Slack alerter for the CBOE Volatility Index. It checks VIX once per US trading day at 15:00 New York time (1 h before US close, ~21:00 Danish time, ~15 min delayed quote) so the user can still act the same session, but only posts to the user's Slack when (a) the close moves into a *different tier* of the tier table in `strategy.md`, or (b) CNN's Fear & Greed Index *enters* Extreme Fear (≤ 25) as an early warning that the VIX buy trigger may be near. The post shows the tier change, the action to take, and the full tier table with the current row marked. It also shows CNN's Fear & Greed Index as context (0 = extreme fear, 100 = extreme greed, i.e. the opposite scale of VIX). F&G is never part of the tier logic. A second line says whether F&G confirms the VIX signal (Fear/Panic + F&G ≤ 25, or Complacency + F&G ≥ 75), does not confirm it, or is at an extreme while VIX is not. It encodes the user's 3-number trading rule:
+**VIX** is a Slack alerter for the CBOE Volatility Index. It checks VIX once per US trading day at 15:00 New York time (1 h before US close, ~21:00 Danish time, ~15 min delayed quote) so the user can still act the same session, but only posts to the user's Slack when (a) VIX moves into a *different tier* of the tier table in `strategy.md`, or (b) CNN's Fear & Greed Index *enters* Extreme Fear (≤ 25) as an early warning that the VIX buy trigger may be near. The post shows the tier change, the action to take, and the full tier table with the current row marked. It also shows CNN's Fear & Greed Index as context (0 = extreme fear, 100 = extreme greed, i.e. the opposite scale of VIX). F&G is never part of the tier logic. A second line says whether F&G confirms the VIX signal (Fear/Panic + F&G ≤ 25, or Complacency + F&G ≥ 75), does not confirm it, or is at an extreme while VIX is not. It encodes the user's 3-number trading rule:
 
 - **VIX ≥ 30** → buy SPY/QQQ
 - **VIX ≥ 45** → buy more
@@ -23,7 +23,7 @@ bick.dk cron (hourly) → scheduler/trigger.php → fires only at 15:xx New York
         ├── curl CNN F&G      → Fear & Greed score (context line only, best-effort)
         ├── bc                → classify into tier
         ├── compare           → post if tier changed OR F&G entered Extreme Fear, else exit 0
-        ├── printf            → headline + VIX close + action + tier table + (———) F&G line/verdict
+        ├── printf            → headline + VIX + as-of time + action + tier table + (———) F&G line/verdict
         ├── curl Slack        → POST {"text": ..., "mrkdwn": true}
         └── git commit+push   → state/ (written every run, committed only when changed)
 ```

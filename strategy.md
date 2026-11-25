@@ -18,9 +18,9 @@ The VIX measures 30-day implied volatility on S&P 500 options. It is mean-revert
 - **≥ 30** — fear. Implied vol has roughly doubled. SPX is usually 8–15% off recent highs. Historically the *start* of risk being repriced cheaply.
 - **≥ 45** — panic / forced-selling. Rare. Liquidations dominate price. Almost every print here has been a within-12-months buying opportunity (with one big asterisk — see failure modes).
 
-## Tier table (the Slack alert posts only when the close moves to a different tier)
+## Tier table (the Slack alert posts only when VIX moves to a different tier — read at 15:00 New York time, 1 h before close)
 
-| VIX close | Tier | Emoji | Action |
+| VIX | Tier | Emoji | Action |
 |---|---|---|---|
 | ≤ 14 | Complacency | 🔴 | TRIM / sell |
 | 14 – 20 | Calm | 🟢 | Hold |
@@ -45,7 +45,7 @@ The VIX measures 30-day implied volatility on S&P 500 options. It is mean-revert
 
 1. **2022-style grinding bears.** A slow -25% drawdown can happen *without* VIX ever crossing 45, or even staying above 30 for long. Buying every 30 print on the way down means averaging into a falling market. The strategy assumes panic-style vol; trending bears starve it.
 2. **Long calm regimes.** 2017 had VIX under 14 for months. Trimming early gave up large gains. The 14 signal is "right eventually" but can be very early.
-3. **Vol-of-vol intraday spikes.** Intraday VIX can poke above 30 then close at 24. Using EOD close (this routine does) avoids most of that, but be aware of the gap.
+3. **Vol-of-vol intraday spikes.** Intraday VIX can poke above 30 then close at 24. The bot reads VIX at 15:00 NY (1 h before close, ~15 min delayed) so you can act the same session; by then most of the day's spike-and-fade has played out, but the final hour can still move it across a line.
 4. **Single-name vol ≠ index vol.** Buying individual stocks on a VIX print can still go badly if the stock has idiosyncratic risk. Stick to index ETFs unless you have a separate thesis.
 5. **45+ is rare.** Only ~6 events in 30 years. Don't expect to deploy that bullet often.
 
