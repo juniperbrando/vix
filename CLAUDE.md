@@ -12,10 +12,10 @@ Guidance for Claude Code working in this folder.
 
 ## Architecture
 
-A single GitHub Actions workflow does everything: fetch, classify, compare with last state, post on change, persist state. A cron on bick.dk fires it via `workflow_dispatch` at 15:00 NY. GH's own `schedule:` (21:30 UTC) stays as a post-close backstop — it starts 5–8 h late, so it can't be the main trigger, but it catches final-hour tier changes and a dead bick.dk cron (it only posts if the close tier differs from the stored one).
+A single GitHub Actions workflow does everything: fetch, classify, compare with last state, post on change, persist state. A cron-job.org job calls `scheduler/trigger.php` on bick.dk (FTP-only webhotel, same setup as coc-bot), which fires it via `workflow_dispatch` at 15:00 NY. GH's own `schedule:` (21:30 UTC) stays as a post-close backstop — it starts 5–8 h late, so it can't be the main trigger, but it catches final-hour tier changes and a dead bick.dk cron (it only posts if the close tier differs from the stored one).
 
 ```
-bick.dk cron (0 20,21 * * 1-5 Danish time) → scheduler/trigger.php → fires only at 15:xx New York time, Mon–Fri
+cron-job.org (0 15 * * 1-5, America/New_York) → GET bick.dk/…/scheduler/trigger.php?key=… → fires only at 15:xx New York time, Mon–Fri
   └── POST api.github.com/.../workflows/vix-eod.yml/dispatches
 GH cron 30 21 * * 1-5 (UTC, backstop on the close, starts hours late)
   └── runs the same workflow:
@@ -34,14 +34,14 @@ Why GH Actions instead of a Claude Code routine: the routine sandbox blocks outb
 
 ## Files
 
-- `scheduler/trigger.php` — runs on bick.dk; dispatches the workflow at 15:00 NY time. Token lives in `scheduler/config.php` (gitignored; template in `config.example.php`): fine-grained PAT, repo `juniperbrando/vix` only, Actions read/write. `php trigger.php --now` fires immediately.
+- `scheduler/trigger.php` — uploaded to bick.dk by FTP; called by cron-job.org with `?key=<trigger_key>` (wrong/missing key → 404). Dispatches the workflow only at 15:xx NY on weekdays; add `&now=1` to fire immediately for testing. Returns 500 on dispatch failure so cron-job.org flags it. Secrets live in `scheduler/config.php` (gitignored; template in `config.example.php`): `github_token` = fine-grained PAT, repo `juniperbrando/vix` only, Actions read/write; `trigger_key` = random string.
 - `.github/workflows/vix-eod.yml` — the entire bot. Bash + curl + jq + bc, ~120 lines.
 - `state/last_tier`, `state/last_fg_zone` — VIX tier and F&G zone (`extreme_fear` | `normal`) seen on the last run, committed back by the workflow (`vix-bot`). Delete `last_tier` to force a "first run" post; edit either to simulate a change on the next run. Pull before you push, since the bot commits to `main`.
 - `strategy.md` — the 3-number rule, tier table, historical anchors, failure modes. Read this when adjusting thresholds or interpreting alerts.
 
 ## Schedule
 
-One run per weekday at 15:00 America/New_York (= 21:00 Danish time, 20:00 during the few weeks each spring/autumn when US and EU DST differ). The time check lives in `trigger.php`; the bick.dk cron runs at both candidate hours (`0 20,21 * * 1-5` in Danish time, `0 19,20` in UTC) and the script fires only on the right one. CBOE quotes are ~15 min delayed, so the post reflects ~14:45 NY; the post shows the quote's "as of" time. CBOE's endpoint does not show extended-hours VIX — checks before 9:30 NY would only see yesterday's close. A tier change in the final hour is caught by the GH-cron backstop on the close (arrives late at night / early morning Danish time). US holidays: the quote is stale → no tier change → no post.
+One run per weekday at 15:00 America/New_York (= 21:00 Danish time, 20:00 during the few weeks each spring/autumn when US and EU DST differ). The cron-job.org job uses timezone America/New_York, so DST is handled there; `trigger.php` double-checks the NY hour. CBOE quotes are ~15 min delayed, so the post reflects ~14:45 NY; the post shows the quote's "as of" time. CBOE's endpoint does not show extended-hours VIX — checks before 9:30 NY would only see yesterday's close. A tier change in the final hour is caught by the GH-cron backstop on the close (arrives late at night / early morning Danish time). US holidays: the quote is stale → no tier change → no post.
 
 ## Secrets
 

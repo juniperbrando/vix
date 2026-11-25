@@ -2,25 +2,35 @@
 // Fires the VIX GitHub Actions workflow once per US trading day at 15:00
 // New York time (1 h before US close, ~21:00 Danish time).
 //
-// 15:00 NY is 21:00 Danish time, but 20:00 for a few weeks each spring/autumn
-// when US and EU DST differ. So cron runs at both hours and the script itself
-// fires only on the right one:
-//   host in Danish time: 0 20,21 * * 1-5  php /path/to/scheduler/trigger.php
-//   host in UTC:         0 19,20 * * 1-5  php /path/to/scheduler/trigger.php
+// Hosted on bick.dk (FTP-only webhotel) and called by cron-job.org:
+//   URL:      https://bick.dk/<folder>/scheduler/trigger.php?key=<trigger_key>
+//   Timezone: America/New_York, schedule 0 15 * * 1-5 (cron-job.org handles DST)
+// The script also refuses to fire outside 15:xx New York time on weekdays, so a
+// mis-set schedule can't spam runs.
 //
-// Test from the shell (skips the time check):  php trigger.php --now
+// Test (skips the time check):  ...trigger.php?key=<trigger_key>&now=1
+//                          or:  php trigger.php --now
 //
 // Needs scheduler/config.php (gitignored) — copy config.example.php.
 
-if (PHP_SAPI !== 'cli') { http_response_code(404); exit; } // cron only, never via the web
-
 $config = require __DIR__ . '/config.php';
+$cli    = PHP_SAPI === 'cli';
+
+// Over the web, require the shared secret; answer 404 otherwise so the URL
+// looks like nothing is there.
+if (!$cli && !hash_equals((string) ($config['trigger_key'] ?? ''), (string) ($_GET['key'] ?? ''))
+          || !$cli && ($config['trigger_key'] ?? '') === '') {
+    http_response_code(404);
+    exit;
+}
+if (!$cli) header('Content-Type: text/plain; charset=utf-8');
 
 $ny    = new DateTime('now', new DateTimeZone('America/New_York'));
-$force = in_array('--now', $argv ?? [], true);
+$force = $cli ? in_array('--now', $argv ?? [], true) : (($_GET['now'] ?? '') === '1');
 
 if (!$force && ((int) $ny->format('N') > 5 || (int) $ny->format('G') !== 15)) {
-    exit(0); // not 15:xx on a weekday in New York — nothing to do
+    echo $ny->format('Y-m-d H:i T') . " — not 15:xx on a NY weekday, nothing to do\n";
+    exit(0);
 }
 
 $url = 'https://api.github.com/repos/juniperbrando/vix/actions/workflows/vix-eod.yml/dispatches';
@@ -52,5 +62,7 @@ for ($attempt = 1; $attempt <= 4; $attempt++) {
     sleep(10);
 }
 
-fwrite(STDERR, $ny->format('Y-m-d H:i T') . " — dispatch failed (HTTP $code): " . ($body ?: curl_error($ch)) . "\n");
+// 500 makes cron-job.org mark the run as failed (and e-mail you if enabled)
+if (!$cli) http_response_code(500);
+echo $ny->format('Y-m-d H:i T') . " — dispatch failed (HTTP $code): " . ($body ?: curl_error($ch)) . "\n";
 exit(1);
