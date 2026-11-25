@@ -4,7 +4,7 @@ Guidance for Claude Code working in this folder.
 
 ## Project overview
 
-**VIX** is a Slack alerter for the CBOE Volatility Index. It checks the EOD VIX close once per US trading day, but only posts to the user's Slack when (a) the close moves into a *different tier* of the tier table in `strategy.md`, or (b) CNN's Fear & Greed Index *enters* Extreme Fear (≤ 25) as an early warning that the VIX buy trigger may be near. The post shows the tier change, the action to take, and the full tier table with the current row marked. It also shows CNN's Fear & Greed Index as context (0 = extreme fear, 100 = extreme greed, i.e. the opposite scale of VIX). F&G is never part of the tier logic. A second line says whether F&G confirms the VIX signal (Fear/Panic + F&G ≤ 25, or Complacency + F&G ≥ 75), does not confirm it, or is at an extreme while VIX is not. It encodes the user's 3-number trading rule:
+**VIX** is a Slack alerter for the CBOE Volatility Index. It checks VIX once per US trading day at 15:00 New York time (1 h before US close, ~21:00 Danish time, ~15 min delayed quote) so the user can still act the same session, but only posts to the user's Slack when (a) the close moves into a *different tier* of the tier table in `strategy.md`, or (b) CNN's Fear & Greed Index *enters* Extreme Fear (≤ 25) as an early warning that the VIX buy trigger may be near. The post shows the tier change, the action to take, and the full tier table with the current row marked. It also shows CNN's Fear & Greed Index as context (0 = extreme fear, 100 = extreme greed, i.e. the opposite scale of VIX). F&G is never part of the tier logic. A second line says whether F&G confirms the VIX signal (Fear/Panic + F&G ≤ 25, or Complacency + F&G ≥ 75), does not confirm it, or is at an extreme while VIX is not. It encodes the user's 3-number trading rule:
 
 - **VIX ≥ 30** → buy SPY/QQQ
 - **VIX ≥ 45** → buy more
@@ -12,11 +12,12 @@ Guidance for Claude Code working in this folder.
 
 ## Architecture
 
-A single GitHub Actions workflow does everything: fetch, classify, compare with last state, post on change, persist state.
+A single GitHub Actions workflow does everything: fetch, classify, compare with last state, post on change, persist state. It has no GH `schedule:` (GH cron started runs 5–8 h late); a cron on bick.dk fires it via `workflow_dispatch`.
 
 ```
+bick.dk cron (hourly) → scheduler/trigger.php → fires only at 15:xx New York time, Mon–Fri
+  └── POST api.github.com/.../workflows/vix-eod.yml/dispatches
 .github/workflows/vix-eod.yml
-  └── cron: 30 21 * * 1-5 (UTC)
         ├── actions/checkout  → repo incl. state/last_tier + state/last_fg_zone
         ├── curl CBOE JSON    → price, change, pct (browser headers; falls back to FRED VIXCLS, ~1 day lag)
         ├── curl CNN F&G      → Fear & Greed score (context line only, best-effort)
@@ -31,15 +32,14 @@ Why GH Actions instead of a Claude Code routine: the routine sandbox blocks outb
 
 ## Files
 
+- `scheduler/trigger.php` — runs on bick.dk; dispatches the workflow at 15:00 NY time. Token lives in `scheduler/config.php` (gitignored; template in `config.example.php`): fine-grained PAT, repo `juniperbrando/vix` only, Actions read/write. `php trigger.php --now` fires immediately.
 - `.github/workflows/vix-eod.yml` — the entire bot. Bash + curl + jq + bc, ~120 lines.
 - `state/last_tier`, `state/last_fg_zone` — VIX tier and F&G zone (`extreme_fear` | `normal`) seen on the last run, committed back by the workflow (`vix-bot`). Delete `last_tier` to force a "first run" post; edit either to simulate a change on the next run. Pull before you push, since the bot commits to `main`.
 - `strategy.md` — the 3-number rule, tier table, historical anchors, failure modes. Read this when adjusting thresholds or interpreting alerts.
 
 ## Schedule
 
-Cron: `30 21 * * 1-5` UTC = 22:30 CET / 23:30 CEST, weekdays only. US close is 16:00 ET, so 21:30 UTC is always ≥30 min post-close regardless of DST.
-
-GH Actions cron drifts up to ~15 min on free tier. Acceptable for EOD reporting.
+One run per weekday at 15:00 America/New_York (= 21:00 Danish time, 20:00 during the few weeks each spring/autumn when US and EU DST differ). The time check lives in `trigger.php`, so the bick.dk cron is just `0 * * * *`. CBOE quotes are ~15 min delayed, so the post reflects ~14:45 NY; the post shows the quote's "as of" time. CBOE's endpoint does not show extended-hours VIX — checks before 9:30 NY would only see yesterday's close. A tier change in the final hour is picked up the next day. US holidays: the quote is stale → no tier change → no post.
 
 ## Secrets
 

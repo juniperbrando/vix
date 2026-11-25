@@ -1,10 +1,12 @@
-name: VIX EOD Slack alert
+name: VIX Slack alert
 
+# No `schedule:` trigger on purpose — GH Actions cron started runs 5–8 h late.
+# Instead scheduler/trigger.php on bick.dk calls workflow_dispatch once per US
+# trading day at 15:00 New York time (1 h before US close, ~21:00 Danish time),
+# so there is still time to act the same session. One run per day → at most
+# one Slack post per day.
 on:
-  schedule:
-    # 21:30 UTC = 22:30 CET / 23:30 CEST — ~30 min after US close, every weekday
-    - cron: '30 21 * * 1-5'
-  workflow_dispatch:  # allow manual triggers from the GH UI / `gh workflow run`
+  workflow_dispatch:  # fired by bick.dk, the GH UI, or `gh workflow run`
     inputs:
       force:
         description: 'Post to Slack even if nothing changed'
@@ -16,6 +18,11 @@ on:
 #   state/last_fg_zone  — CNN Fear & Greed zone on the last run (extreme_fear | normal)
 permissions:
   contents: write
+
+# Never let two runs race on state/ (e.g. a manual run during the scheduled one)
+concurrency:
+  group: vix
+  cancel-in-progress: false
 
 jobs:
   vix:
@@ -53,7 +60,10 @@ jobs:
           if price=$(jq -er '.data.current_price | numbers' <<<"$response" 2>/dev/null); then
             change=$(jq -r '.data.price_change'        <<<"$response")
             pct=$(jq -r '.data.price_change_percent'   <<<"$response")
-            echo "VIX source: CBOE"
+            # last_trade_time is New York time, e.g. 2026-11-24T14:45:01 (quotes ~15 min delayed)
+            as_of=$(jq -r '.data.last_trade_time // empty' <<<"$response" | sed -E 's/^([0-9-]+)T([0-9]{2}:[0-9]{2}).*/\1 \2/')
+            [[ -n "$as_of" ]] && source_note="  _as of ${as_of} New York time_"
+            echo "VIX source: CBOE (as of ${as_of:-unknown} NY)"
           else
             echo "::warning::CBOE unavailable — falling back to FRED (VIXCLS). First 300 bytes from CBOE:"
             head -c 300 <<<"$response"; echo
@@ -115,7 +125,7 @@ jobs:
           mkdir -p state
           prev_tier=$(cat state/last_tier    2>/dev/null || echo "")
           prev_fg=$(cat   state/last_fg_zone 2>/dev/null || echo "")
-          echo "VIX close ${formatted_price} → tier: ${tier} (previous: ${prev_tier:-none}); F&G zone: ${fg_zone:-n/a} (previous: ${prev_fg:-none})"
+          echo "VIX ${formatted_price} → tier: ${tier} (previous: ${prev_tier:-none}); F&G zone: ${fg_zone:-n/a} (previous: ${prev_fg:-none})"
 
           # Persist new state now. If the Slack POST below fails the step fails and
           # the commit step is skipped, so a failed post is retried next run.
@@ -180,7 +190,7 @@ jobs:
             fg)    headline="👀 *CNN Fear & Greed entered Extreme Fear* — VIX tier still ${emoji} *${tier}*" ;;
             force) headline="${ping}${emoji} *VIX tier:* *${tier}* (unchanged — forced post)" ;;
           esac
-          message="${headline}${nl}📊 VIX EOD: \`${formatted_price}\`  (${arrow} ${signed_change}  ${signed_pct}%)${source_note}${nl}👉 *Action: ${action}*${nl}${nl}_Tier table:_${nl}${table}${fg_line}"
+          message="${headline}${nl}📊 VIX: \`${formatted_price}\`  (${arrow} ${signed_change}  ${signed_pct}%)${source_note}${nl}👉 *Action: ${action}*${nl}${nl}_Tier table:_${nl}${table}${fg_line}"
 
           echo "---"
           echo "$message"
