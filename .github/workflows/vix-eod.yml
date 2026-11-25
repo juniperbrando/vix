@@ -53,6 +53,7 @@ jobs:
           # headers (as for CNN below). Fallback: FRED series VIXCLS (official, free,
           # no key) — but it lags ~1 trading day, so the post says so when used.
           source_note=""
+          vix_label="VIX"
           response=$(curl -sS --fail-with-body --connect-timeout 15 --max-time 30 \
             --retry 2 --retry-delay 5 --retry-all-errors --location \
             -H 'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36' \
@@ -65,7 +66,12 @@ jobs:
             pct=$(jq -r '.data.price_change_percent'   <<<"$response")
             # last_trade_time is New York time, e.g. 2026-11-24T14:45:01 (quotes ~15 min delayed)
             as_of=$(jq -r '.data.last_trade_time // empty' <<<"$response" | sed -E 's/^([0-9-]+)T([0-9]{2}:[0-9]{2}).*/\1 \2/')
-            [[ -n "$as_of" ]] && source_note="  _as of ${as_of} New York time_"
+            # Label for the VIX line: quote time in Danish + NY time (GNU date converts)
+            if [[ -n "$as_of" ]] && dk_time=$(TZ=Europe/Copenhagen date -d "TZ=\"America/New_York\" ${as_of}" '+%d/%m %H:%M' 2>/dev/null); then
+              vix_label="VIX ${dk_time} DK (${as_of#* } NY)"
+            elif [[ -n "$as_of" ]]; then
+              vix_label="VIX ${as_of} NY"
+            fi
             echo "VIX source: CBOE (as of ${as_of:-unknown} NY)"
           else
             echo "::warning::CBOE unavailable — falling back to FRED (VIXCLS). First 300 bytes from CBOE:"
@@ -82,7 +88,8 @@ jobs:
             price=$(tail -1      <<<"$fred" | cut -d, -f2)
             change=$(bc -l <<<"$price - $prev_close")
             pct=$(bc -l <<<"($price - $prev_close) / $prev_close * 100")
-            source_note="${nl}_Source: FRED, close of ${fred_date} (CBOE unavailable — may lag a day)_"
+            source_note="${nl}_Source: FRED (CBOE unavailable — may lag a day)_"
+            vix_label="VIX close ${fred_date}"
             echo "VIX source: FRED (close of ${fred_date})"
           fi
 
@@ -90,7 +97,7 @@ jobs:
           # an "entered Extreme Fear" early-warning trigger — never part of the tier
           # logic. CNN answers 418 to plain curl, so we send browser-like headers.
           # Any failure just drops the F&G line and leaves its state untouched.
-          fg_line=""; fg_zone=""
+          fg_line=""; fg_zone=""; fg_verdict=""
           fg_json=$(curl -sS --connect-timeout 15 --max-time 30 --retry 2 --retry-delay 5 --location \
             -H 'User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36' \
             -H 'Accept: application/json, text/plain, */*' \
@@ -164,7 +171,6 @@ jobs:
           # 7. Does F&G agree with the VIX tier? (contrarian read: ≤25 = extreme
           # fear ≈ VIX ≥30; ≥75 = extreme greed ≈ VIX ≤14). Context only.
           if [[ -n "$fg_line" ]]; then
-            fg_verdict=""
             case "$tier" in
               Fear|Panic)
                 if (( fg_int <= 25 )); then fg_verdict="✅ F&G confirms — both say panic. Buy per the rule."
@@ -179,9 +185,6 @@ jobs:
                 elif (( fg_int >= 75 )); then fg_verdict="👀 F&G is in Extreme Greed while VIX is not — trim zone may be approaching."
                 fi ;;
             esac
-            [[ -n "$fg_verdict" ]] && fg_line="${fg_line}${nl}${fg_verdict}"
-            # Separate block under the tier table — F&G is a different thing from VIX
-            fg_line="${nl}${nl}———${nl}${fg_line}"
           fi
 
           # 8. Build message
@@ -193,14 +196,21 @@ jobs:
             fg)    headline="👀 *CNN Fear & Greed entered Extreme Fear* — VIX tier still ${emoji} *${tier}*" ;;
             force) headline="${ping}${emoji} *VIX tier:* *${tier}* (unchanged — forced post)" ;;
           esac
-          message="${headline}${nl}📊 VIX: \`${formatted_price}\`  (${arrow} ${signed_change}  ${signed_pct}%)${source_note}${nl}👉 *Action: ${action}*${nl}${nl}_Tier table:_${nl}${table}${fg_line}"
+          # Layout: headline + VIX reading, tier table, ——— F&G context ———, then
+          # what to do (action + F&G verdict) together at the bottom.
+          message="${headline}${nl}📊 ${vix_label}: \`${formatted_price}\`  (${arrow} ${signed_change}  ${signed_pct}%)${source_note}"
+          message+="${nl}${nl}_Tier table:_${nl}${table}${nl}${nl}———"
+          [[ -n "$fg_line" ]] && message+="${nl}${fg_line}${nl}———"
+          message+="${nl}👉 *Action: ${action}*"
+          [[ -n "$fg_verdict" ]] && message+="${nl}${fg_verdict}"
 
           echo "---"
           echo "$message"
           echo "---"
 
           # 9. POST to Slack
-          jq -n --arg text "$message" '{text: $text, mrkdwn: true}' \
+          # unfurl_*: false stops Slack from expanding the CNN link into a big preview card
+          jq -n --arg text "$message" '{text: $text, mrkdwn: true, unfurl_links: false, unfurl_media: false}' \
             | curl -sS "${CURL_OPTS[@]}" -X POST -H 'Content-Type: application/json' \
                 --data-binary @- "$SLACK_WEBHOOK_URL"
           echo
